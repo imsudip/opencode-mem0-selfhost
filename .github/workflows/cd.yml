@@ -30,15 +30,17 @@ jobs:
         with:
           bun-version: ">=1.3.0"
 
-      # setup-node is required for npm OIDC trusted publishing — it sets up
-      # the registry URL and configures NODE_AUTH_TOKEN from the OIDC token
-      # (`id-token: write` permission above). Without this, `npm publish`
-      # fails with ENEEDAUTH even when the OIDC config on npmjs.com is
-      # correct.
+      # Node 24 ships with npm 11.x, required for OIDC trusted publishing.
+      # CRITICAL: do NOT set `registry-url` on setup-node for OIDC-only
+      # workflows. When set, setup-node writes an .npmrc with
+      # _authToken=${NODE_AUTH_TOKEN} and exports a placeholder
+      # NODE_AUTH_TOKEN, which npm CLI prefers over the OIDC token and
+      # surfaces as a misleading 404 on publish. See npm/cli#8730 and
+      # actions/setup-node#1477. setup-node here is purely to provide a
+      # recent Node runtime so `npm publish` has npm ≥ 9.5.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org/"
+          node-version: "24"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
