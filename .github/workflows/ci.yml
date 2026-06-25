@@ -33,7 +33,7 @@ jobs:
       - name: Verify dist artifact
         run: |
           test -f dist/index.js || (echo "dist/index.js missing" && exit 1)
-          test -f dist/index.d.ts || (echo "dist/index.d.ts missing" && exit 1)
+          test -f dist/opencode-mem0.d.ts || (echo "dist/opencode-mem0.d.ts missing" && exit 1)
           echo "Build artifacts present."
 
       - name: Verify opencode-skills shipped
