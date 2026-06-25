@@ -404,8 +404,8 @@ The REST client was written by reading:
 - `mem0/server/main.py` — endpoint paths, request/response Pydantic models,
   auth dependencies (`verify_auth` vs `require_admin`).
 - `mem0/server/routers/entities.py` — `/entities` router (list + cascade
-  delete). The first round missed this; earlier work
-  started from had stubbed entity endpoints as no-ops. Round 2 fixed
+  delete). The first round had stubbed entity endpoints as no-ops. Round 2
+  fixed
   that.
 - `mem0/server/auth.py` — confirmed `X-API-Key` is the API-key auth
   header name.
