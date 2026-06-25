@@ -1,6 +1,6 @@
 {
   "name": "opencode-mem0-selfhost",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Mem0 persistent memory plugin for OpenCode — self-host Mem0 REST backend, no cloud SDK, no telemetry by default",
   "main": "dist/index.js",
