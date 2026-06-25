@@ -2,6 +2,7 @@
 
 > Persistent memory for [OpenCode](https://opencode.ai), backed by a self-hosted
 > [Mem0](https://docs.mem0.ai/open-source/setup) REST server.
+> [Install from npm](https://www.npmjs.com/package/opencode-mem0-selfhost) — no build required.
 
 A community-maintained self-host fork of the official
 [`@mem0/opencode-plugin`](https://github.com/mem0ai/mem0/tree/main/integrations/mem0-plugin/.opencode-plugin).
@@ -55,6 +56,9 @@ layer needs replacing. That's what this fork does.
 
 ## Status
 
+- **Published on npm** as [`opencode-mem0-selfhost`](https://www.npmjs.com/package/opencode-mem0-selfhost)
+  (latest = 0.1.4). CI builds and publishes automatically on every
+  `vX.Y.Z` tag via [npm OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers).
 - **Tested against source, not yet against a running server.** Every
   endpoint, request shape, and response shape was cross-checked against
   `mem0/server/main.py`, `mem0/server/routers/entities.py`, and the docs at
@@ -69,6 +73,48 @@ layer needs replacing. That's what this fork does.
 
 ## Install
 
+OpenCode loads plugins in three ways: from npm, from a local file, or
+from a directory. The npm install is the recommended one. See
+[opencode.ai/docs/plugins](https://opencode.ai/docs/plugins) for the
+full mechanism.
+
+### From npm (recommended)
+
+Add the package to your OpenCode config. Edit `~/.config/opencode/opencode.json`
+(for a global install) or `<project>/opencode.json` (for a project-local
+install):
+
+```json
+{
+  "plugin": ["opencode-mem0-selfhost"]
+}
+```
+
+Restart OpenCode. It will `bun install` the package (and its dependencies)
+automatically into `~/.cache/opencode/node_modules/` on first launch. The
+plugin registers its memory tools and skills itself — no MCP server to
+configure.
+
+The `opencode plugin` CLI command documented in the mem0 integration
+guide is shorthand for the same thing.
+
+### Pin a specific version
+
+If you want a reproducible install (recommended for teams), pin the
+version:
+
+```json
+{
+  "plugin": ["opencode-mem0-selfhost@0.1.4"]
+}
+```
+
+Omit the `@<version>` to track the latest `dist-tag.latest` from npm.
+
+### From a Git checkout (contributors / local dev)
+
+Clone the repo, build, and load the bundle via `file://`:
+
 ```bash
 git clone https://github.com/imsudip/opencode-mem0-selfhost.git
 cd opencode-mem0-selfhost
@@ -76,8 +122,7 @@ bun install
 bun run build
 ```
 
-Then add the built plugin to `~/.config/opencode/opencode.json` (or a
-project-level `opencode.json`):
+Then point your config at the built bundle:
 
 ```json
 {
@@ -87,8 +132,8 @@ project-level `opencode.json`):
 }
 ```
 
-Restart OpenCode. The plugin registers its memory tools and skills itself;
-no MCP server to configure.
+This is the path maintainers use while developing. End users should use
+the npm install above.
 
 ## Configure
 
@@ -306,9 +351,10 @@ license.
 
 ## Verify
 
-After install + restart:
+After installing via npm (or source) and restarting OpenCode:
 
-1. Start OpenCode inside a git repo (so `app_id` resolves).
+1. Start OpenCode inside a git repo (so `app_id` resolves from the git
+   remote).
 2. Ask: *"Search my memories for recent decisions"*
 3. If the `mem0_*` tools respond, you're connected.
 4. Run `/mem0-status` for a diagnostic summary.
@@ -328,11 +374,12 @@ Expect a JSON body with `results: [{id, memory, ...}]`.
 
 | Problem | Fix |
 |---------|-----|
-| No tools appearing in OpenCode | Restart OpenCode after installing |
+| No tools appearing in OpenCode | Check `~/.config/opencode/opencode.json` (or `<project>/opencode.json`) has `"opencode-mem0-selfhost"` in the `plugin` array, then restart OpenCode. |
 | `Connection refused` | Check `MEM0_HOST`. Default is `http://localhost:8888` (Compose). Raw Docker / uvicorn use 8000. |
 | `401 Unauthorized` | `echo $MEM0_API_KEY` — the value must match a key your self-host server accepts (per-user `m0sk_…` or `ADMIN_API_KEY` env value). |
 | `403 Forbidden` on `delete_all_memories` or `get_memories` with no identifier | API key doesn't have admin role. Use a per-user key (which is what the dashboard setup wizard issues) and pass a `user_id`. |
-| Plugin not loading | Verify the `file://` path in `opencode.json` points to `dist/index.js` and that `bun run build` ran without errors. |
+| Plugin not loading from source build | Verify the `file://` path in `opencode.json` points to `dist/index.js` and that `bun run build` ran without errors. Also check the file is readable. |
+| `bun install` step fails when OpenCode auto-installs the npm package | Check your network can reach the npm registry. For air-gapped installs, see the `From a Git checkout` path above. |
 | Memories missing project context on search | `app_id` is stored in `metadata.app_id`. Searches must filter on `metadata.app_id`, not top-level `app_id`. The plugin does this automatically. |
 | `get_event_status` returns `UNSUPPORTED` | Expected. Self-host writes are synchronous; the `add_memory` response already contains the memory ID. |
 | `delete_entities` or `list_entities` 404 on older self-host | Requires `mem0` server ≥ a release that ships `routers/entities.py`. Very old pre-1.x builds may not have it. |
