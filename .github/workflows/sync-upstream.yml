@@ -1,0 +1,146 @@
+name: sync-upstream
+
+on:
+  schedule:
+    # Weekly on Monday at 06:00 UTC. Bump to daily if you want faster signals.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Check upstream mem0ai/mem0 for changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Resolve current upstream HEAD
+        id: upstream
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 https://github.com/mem0ai/mem0.git /tmp/mem0-upstream
+          SHA=$(git -C /tmp/mem0-upstream rev-parse HEAD)
+          DATE=$(git -C /tmp/mem0-upstream log -1 --format=%cI)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Compare to .upstream-sha
+        id: check
+        run: |
+          set -euo pipefail
+          LAST=$(cat .upstream-sha 2>/dev/null | tr -d '[:space:]' || true)
+          if [ -z "$LAST" ]; then
+            echo "last=<none>" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::No .upstream-sha file found — first sync."
+          elif [ "$LAST" = "${{ steps.upstream.outputs.sha }}" ]; then
+            echo "last=$LAST" >> "$GITHUB_OUTPUT"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Upstream unchanged ($LAST)."
+          else
+            echo "last=$LAST" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Upstream changed: $LAST -> ${{ steps.upstream.outputs.sha }}"
+          fi
+
+      - name: Collect upstream diff (if changed)
+        if: steps.check.outputs.changed == 'true'
+        id: diff
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/diff
+          git clone --quiet --depth=200 https://github.com/mem0ai/mem0.git /tmp/mem0-full
+          git -C /tmp/mem0-full fetch --quiet --depth=200 origin "${{ steps.check.outputs.last }}" 2>/dev/null || true
+
+          # Files changed in the .opencode-plugin/ subtree
+          if [ "${{ steps.check.outputs.last }}" != "<none>" ] && \
+             git -C /tmp/mem0-full cat-file -e "${{ steps.check.outputs.last }}" 2>/dev/null; then
+            FILES=$(git -C /tmp/mem0-full diff --name-only \
+              "${{ steps.check.outputs.last }}"..HEAD \
+              -- integrations/mem0-plugin/.opencode-plugin/ || true)
+            if [ -z "$FILES" ]; then
+              FILES="(no file changes — only metadata / whitespace / test changes, or the path was renamed upstream)"
+            fi
+            # Truncate diff to ~40 KB to stay well under PR body limits.
+            git -C /tmp/mem0-full diff \
+              "${{ steps.check.outputs.last }}"..HEAD \
+              -- integrations/mem0-plugin/.opencode-plugin/ \
+              | head -c 40000 > /tmp/diff/patch.diff || true
+          else
+            FILES="(first sync — no baseline to diff against)"
+            # On first sync, just list the file inventory.
+            ls -1 /tmp/mem0-full/integrations/mem0-plugin/.opencode-plugin/ > /tmp/diff/patch.diff || true
+          fi
+
+          {
+            echo "files<<EOF"
+            echo "$FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open sync PR
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="chore/upstream-sync-$(date -u +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          printf '%s' "${{ steps.upstream.outputs.sha }}" > .upstream-sha
+          git add .upstream-sha
+          git commit -m "chore: bump upstream ref to ${{ steps.upstream.outputs.sha }}"
+          git push origin "$BRANCH"
+
+          # Build the PR body from the diff + file list.
+          BODY=$(cat <<EOF
+          ## Upstream sync available
+
+          **New upstream SHA**: \`${{ steps.upstream.outputs.sha }}\` (committed ${{ steps.upstream.outputs.date }})
+          **Previously seen**: \`${{ steps.check.outputs.last }}\`
+
+          Upstream: [mem0ai/mem0](https://github.com/mem0ai/mem0) — path: \`integrations/mem0-plugin/.opencode-plugin/\`
+
+          ### Files changed
+
+          \`\`\`
+          ${{ steps.diff.outputs.files }}
+          \`\`\`
+
+          ### Diff (truncated to ~40 KB)
+
+          \`\`\`diff
+          $(cat /tmp/diff/patch.diff 2>/dev/null || echo '(no diff captured)')
+          \`\`\`
+
+          ### What to do
+
+          This PR only bumps the tracked upstream SHA. The actual porting of upstream
+          changes into our source files is a manual step — we don't auto-merge
+          because upstream uses the \`mem0ai\` SDK while we use a thin REST client
+          against your self-host server.
+
+          Review the diff above and port the relevant changes into our \`src/\`
+          files (likely \`opencode-mem0.ts\`, \`scope.ts\`, \`dream.ts\`, the
+          skills, etc.). Then merge this PR so we don't re-notify for the same
+          upstream changes next week.
+
+          See \`README.md\` for the self-host differences (notably: \`app_id\`
+          in metadata, synchronous writes, no \`get_event_status\`, no
+          \`mem0ai\` Cloud project APIs).
+          EOF
+          )
+
+          gh pr create \
+            --title "chore: upstream mem0ai/mem0 sync (${{ steps.upstream.outputs.sha }})" \
+            --body "$BODY" \
+            --base main \
+            --head "$BRANCH"
