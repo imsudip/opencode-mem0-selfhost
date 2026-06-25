@@ -81,10 +81,10 @@ jobs:
 
       - name: Attach dist artifact to release
         if: github.event_name == 'push'
+        continue-on-error: true  # don't fail the whole release if the upload step hiccups
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Add the prebuilt bundle as a downloadable asset on the release.
-          gh release upload "$GITHUB_REF_NAME" dist/index.js \
-            --clobber \
-            --label "bundled plugin (dist/index.js)"
+          # The file keeps its name (dist/index.js) on the release page.
+          gh release upload "$GITHUB_REF_NAME" dist/index.js --clobber
