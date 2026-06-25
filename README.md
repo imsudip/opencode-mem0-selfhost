@@ -68,15 +68,25 @@ If `MEM0_HOST` is not set, the client falls back to
   against your self-host server.
 - **No phone-home telemetry.** Telemetry is **opt-in** (`MEM0_TELEMETRY=true`),
   unlike upstream where it's opt-out. Disabled by default.
-- **No `mem0ai` Cloud project APIs.** Project category auto-setup and async
-  event status are no-ops — the self-host REST API doesn't expose them.
+- **No `mem0ai` Cloud project APIs.** Per-project category configuration and
+  async event status are absent — the self-host REST API doesn't expose them.
+  `getProject`/`updateProject` are removed entirely; `get_event_status` is a
+  no-op that returns `UNSUPPORTED` for skill compatibility.
 - **`app_id` is stored in metadata.** The self-host REST API only supports
   `user_id`, `agent_id`, `run_id`, and `metadata` as top-level identity
   fields. The plugin transparently places `app_id` under `metadata.app_id` on
   every write and filters by it client-side on reads.
-- **`delete_all_memories` is a list-then-delete loop** rather than a single
-  bulk call. The self-host admin bulk-delete endpoint ignores metadata filters,
-  so the plugin fetches the matching IDs first and deletes them one at a time.
+- **`delete_all_memories` is a list-then-delete loop.** The self-host
+  `DELETE /memories` endpoint is admin-only, so the plugin fetches matching
+  IDs and deletes them one at a time. Works with a regular API key.
+- **Entity management works, but at different paths.** `list_entities` calls
+  `GET /entities` and works for any authenticated user. `delete_entities` calls
+  `DELETE /entities/{type}/{id}` and cascade-deletes the entity and all its
+  memories. The upstream plugin's `deleteUsers`/`users` methods hit
+  Platform-specific paths that don't exist on self-host.
+- **`update_memory` requires `text`.** The self-host server's `MemoryUpdate`
+  schema has `text: str` as required. The plugin reads the current memory
+  first if `text` is omitted, so "update metadata only" calls work transparently.
 
 ## Verify
 

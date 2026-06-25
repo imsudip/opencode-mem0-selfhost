@@ -28,10 +28,16 @@
  *
  *   3. **No admin bulk-delete by identity.** `deleteAll` therefore has to
  *      fetch the matching IDs first, then delete one by one. This is safe but
- *      slow for projects with thousands of memories.
+ *      slow for projects with thousands of memories. The `DELETE /memories`
+ *      endpoint exists but is admin-only, so the list-then-delete approach is
+ *      the only way to support non-admin API keys.
  *
- *   4. **No entity management.** `deleteUsers` / `users` are stubs that
- *      return `{unsupported: true}`.
+ *   4. **Entity management lives under `/entities`, not the Platform paths.**
+ *      `users()` calls `GET /entities` (any authenticated user can list).
+ *      `deleteUsers()` calls `DELETE /entities/{type}/{id}` (cascade-deletes
+ *      the entity and all its memories; the server marks the router with
+ *      `require_admin`, but for a self-host deployment run by a single admin
+ *      that matches typical usage).
  */
 
 export interface SelfHostMemoryClientOptions {
@@ -58,6 +64,17 @@ export interface Memory {
   agent_id?: string;
   run_id?: string;
   metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Mirrors the `Entity` Pydantic model at `server/routers/entities.py:20`. */
+export type EntityType = "user" | "agent" | "run";
+
+export interface Entity {
+  id: string;
+  type: EntityType;
+  total_memories: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -276,9 +293,25 @@ export class SelfHostMemoryClient {
     return this.request<Memory>("GET", `/memories/${encodeURIComponent(id)}`);
   }
 
+  /**
+   * Update a memory. The self-host server's `MemoryUpdate` schema requires
+   * `text` (it's how the server knows what to update). To preserve SDK
+   * ergonomics we read the current memory first if `text` is missing, then
+   * send the same text back with the new metadata.
+   */
   async update(id: string, options: UpdateOptions): Promise<Memory> {
+    let text = options.text;
+    if (text === undefined) {
+      const current = await this.get(id);
+      text = current.memory;
+    }
+    if (text === undefined || text === null) {
+      throw new Error(
+        `mem0 self-host update(${id}): server requires 'text' but the memory has no text and none was provided`,
+      );
+    }
     const body = compact({
-      text: options.text,
+      text,
       metadata: options.metadata,
     });
     return this.request<Memory>("PUT", `/memories/${encodeURIComponent(id)}`, { body });
@@ -293,7 +326,9 @@ export class SelfHostMemoryClient {
    * The self-host server's admin bulk-delete endpoint ignores metadata filters
    * (notably `app_id`), which would be unsafe to call with a first-class
    * `user_id` (it would wipe the user's memories across every project).
-   * Instead: list matching memories, then delete them one at a time.
+   * Instead: list matching memories, then delete them one at a time. The
+   * `delete_all_memories` REST endpoint at `DELETE /memories` is admin-only
+   * anyway, so this works for non-admin API keys too.
    */
   async deleteAll(options: GetAllOptions = {}): Promise<{ deleted: number }> {
     const pageSize = 200;
@@ -317,34 +352,69 @@ export class SelfHostMemoryClient {
     return { deleted: totalDeleted };
   }
 
-  /** Self-host doesn't expose entity management. Stub for compatibility. */
-  async deleteUsers(_options: Record<string, unknown> = {}): Promise<{ unsupported: true; message: string }> {
-    return {
-      unsupported: true,
-      message: "Self-host Mem0 REST does not expose entity deletion; delete matching memories instead.",
-    };
-  }
-
-  /** Self-host doesn't expose entity management. Stub for compatibility. */
-  async users(_options: Record<string, unknown> = {}): Promise<{ unsupported: true; message: string }> {
-    return {
-      unsupported: true,
-      message: "Self-host Mem0 REST does not expose entity listing.",
-    };
+  /**
+   * List entities (`user` | `agent` | `run`) and their memory counts.
+   * Self-host server: `GET /entities` — works with any authenticated user,
+   * not just admins. The list is computed by scanning up to 10k stored
+   * memories server-side, so the result is best-effort for very large
+   * deployments.
+   */
+  async users(_options: { page?: number; page_size?: number } = {}): Promise<Entity[]> {
+    return this.request<Entity[]>("GET", "/entities");
   }
 
   /**
-   * Health check. Pings `GET /health` (or `/` if the server doesn't expose
-   * `/health`) and returns whether the server responded with a 2xx status.
-   * Use this in your deployment / monitoring, not from inside the plugin.
+   * Delete an entity and all of its memories.
+   * Self-host server: `DELETE /entities/{type}/{id}` — where `type` is
+   * `"user" | "agent" | "run"`. Internally this calls the same
+   * `Memory.delete_all(user_id=...)` (or `agent_id` / `run_id`) that
+   * `deleteUsers` would call on the Platform SDK, so it's a true cascade
+   * delete scoped to one entity.
+   */
+  async deleteUsers(options: { type?: EntityType; user_id?: string; agent_id?: string; run_id?: string }): Promise<{ message: string }> {
+    let entityType: EntityType;
+    let entityId: string | undefined;
+
+    if (options.type && options.user_id) {
+      // Explicit type provided — use it.
+      entityType = options.type;
+      entityId = options.user_id;
+    } else if (options.user_id) {
+      entityType = "user";
+      entityId = options.user_id;
+    } else if (options.agent_id) {
+      entityType = "agent";
+      entityId = options.agent_id;
+    } else if (options.run_id) {
+      entityType = "run";
+      entityId = options.run_id;
+    } else {
+      throw new Error(
+        "mem0 self-host deleteUsers: one of user_id, agent_id, or run_id is required",
+      );
+    }
+
+    return this.request<{ message: string }>(
+      "DELETE",
+      `/entities/${entityType}/${encodeURIComponent(entityId ?? "")}`,
+    );
+  }
+
+  /**
+   * Health check. The self-host server does NOT expose `/health` — its only
+   * always-reachable endpoints are `/` (307 redirect to /docs) and
+   * `/openapi.json` (200). We try both; the OpenAPI document is the more
+   * reliable signal because it requires the FastAPI app to be fully loaded.
+   * Returns `{ok: true}` if any of them responds 2xx after redirects.
    */
   async health(): Promise<{ ok: boolean; status: number; host: string }> {
-    const paths = ["/health", "/"];
+    const paths = ["/openapi.json", "/"];
     let lastStatus = 0;
     for (const path of paths) {
       try {
         const res = await fetch(new URL(path, `${this.host}/`), {
           method: "GET",
+          redirect: "follow",
           headers: this.apiKey ? { "X-API-Key": this.apiKey } : {},
           signal: AbortSignal.timeout(this.timeoutMs),
         });

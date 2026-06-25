@@ -522,36 +522,34 @@ Identity context (resolved at plugin startup):
       }),
 
       delete_entities: tool({
-        description: "Delete user/agent/app/run entities and all their associated memories. NOTE: on self-host Mem0 this is a no-op — the REST API does not expose entity management. Returns {unsupported: true, message: '...'}.",
+        description: "Delete a user/agent/run entity and all of its associated memories. On self-host Mem0 this calls DELETE /entities/{type}/{id} and works for non-admin API keys. Provide exactly one of user_id, agent_id, or run_id (optionally with an explicit type to disambiguate).",
         args: {
           user_id: tool.schema.string().optional().describe("User ID of the entity to delete"),
           agent_id: tool.schema.string().optional().describe("Agent ID of the entity to delete"),
-          app_id: tool.schema.string().optional().describe("App/Project ID of the entity to delete"),
           run_id: tool.schema.string().optional().describe("Run ID of the entity to delete"),
         },
         async execute(args) {
           captureEvent("tool_use", {tool: "delete_entities"}, apiKey, appId);
           const res = await mem0.deleteUsers({
-            userId: args.user_id,
-            agentId: args.agent_id,
-            appId: args.app_id,
-            runId: args.run_id,
+            user_id: args.user_id,
+            agent_id: args.agent_id,
+            run_id: args.run_id,
           });
           return JSON.stringify(res);
         }
       }),
 
       list_entities: tool({
-        description: "List all user/agent/app/run entities. NOTE: on self-host Mem0 this is a no-op — the REST API does not expose entity listing. Returns {unsupported: true, message: '...'}.",
+        description: "List all user/agent/run entities known to the server, with their memory counts. On self-host Mem0 this calls GET /entities and works for any authenticated user. The result is best-effort: the server scans up to 10k memories to compute it.",
         args: {
-          page: tool.schema.number().optional().describe("Page number"),
-          page_size: tool.schema.number().optional().describe("Page size"),
+          page: tool.schema.number().optional().describe("Ignored on self-host; the response is a single list."),
+          page_size: tool.schema.number().optional().describe("Ignored on self-host; the response is a single list."),
         },
         async execute(args) {
           captureEvent("tool_use", {tool: "list_entities"}, apiKey, appId);
           const res = await mem0.users({
             page: args.page,
-            pageSize: args.page_size,
+            page_size: args.page_size,
           });
           return JSON.stringify(res);
         }

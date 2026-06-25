@@ -29,12 +29,17 @@ All notable changes to `opencode-mem0-selfhost` will be documented in this file.
 
 - **`app_id` lives in metadata**, not as a top-level identity field. The plugin
   writes it to `metadata.app_id` and filters by it client-side on reads.
-- **`delete_all_memories` is a list-then-delete loop.** The self-host admin
-  bulk-delete endpoint ignores metadata filters, so the plugin fetches matching
+- **`delete_all_memories` is a list-then-delete loop.** The self-host
+  `DELETE /memories` endpoint is admin-only, so the plugin fetches matching
   IDs and deletes them one at a time. Safe but slow for very large projects.
-- **`delete_entities` and `list_entities` are no-ops.** The self-host REST API
-  does not expose entity management; these tools return an `unsupported: true`
-  response.
+- **Entity management lives under `/entities`**, not the Platform paths.
+  `list_entities` calls `GET /entities` (any authenticated user can list, best
+  effort up to 10k memories scanned). `delete_entities` calls
+  `DELETE /entities/{type}/{id}` — works with a regular API key.
+- **`update_memory` requires `text`.** The self-host server's `MemoryUpdate`
+  schema has `text: str` as required (not optional like the Platform SDK).
+  The client reads the current memory first if `text` is omitted, so the
+  agent's "update metadata only" use case still works.
 - **`get_event_status` is a compatibility stub.** Self-host writes are
   synchronous; the response from `add_memory` already contains the memory ID.
   Calling `get_event_status` returns `{status: "UNSUPPORTED", message: "..."}`

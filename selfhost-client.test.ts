@@ -214,12 +214,97 @@ describe("SelfHostMemoryClient — error handling", () => {
   });
 });
 
+describe("SelfHostMemoryClient — users() (entity listing)", () => {
+  test("calls GET /entities", async () => {
+    mockFetchOnce(200, [
+      { id: "alice", type: "user", total_memories: 12 },
+      { id: "bot-1", type: "agent", total_memories: 3 },
+    ]);
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    const res = await c.users({});
+    expect(Array.isArray(res)).toBe(true);
+    expect(res).toHaveLength(2);
+    expect(res[0]?.id).toBe("alice");
+    expect(res[0]?.type).toBe("user");
+    const { url } = lastCall();
+    expect(new URL(url).pathname).toBe("/entities");
+  });
+
+  test("ignores page/page_size (single list, server doesn't paginate)", async () => {
+    mockFetchOnce(200, []);
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    await c.users({ page: 99, page_size: 50 });
+    const { url } = lastCall();
+    expect(new URL(url).search).toBe("");
+  });
+});
+
+describe("SelfHostMemoryClient — deleteUsers() (entity deletion)", () => {
+  test("DELETE /entities/user/{id} when only user_id is given", async () => {
+    mockFetchOnce(200, { message: "Entity deleted" });
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    const r = await c.deleteUsers({ user_id: "alice" });
+    expect(r.message).toBe("Entity deleted");
+    const { url } = lastCall();
+    expect(new URL(url).pathname).toBe("/entities/user/alice");
+  });
+
+  test("DELETE /entities/agent/{id} when agent_id is given", async () => {
+    mockFetchOnce(200, { message: "Entity deleted" });
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    await c.deleteUsers({ agent_id: "bot-1" });
+    const { url } = lastCall();
+    expect(new URL(url).pathname).toBe("/entities/agent/bot-1");
+  });
+
+  test("DELETE /entities/run/{id} when run_id is given", async () => {
+    mockFetchOnce(200, { message: "Entity deleted" });
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    await c.deleteUsers({ run_id: "ses_123" });
+    const { url } = lastCall();
+    expect(new URL(url).pathname).toBe("/entities/run/ses_123");
+  });
+
+  test("throws when no entity id is provided", async () => {
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    await expect(c.deleteUsers({})).rejects.toThrow(/one of user_id, agent_id, or run_id is required/);
+  });
+});
+
+describe("SelfHostMemoryClient — update() requires text", () => {
+  test("reads current memory and sends its text when text is not provided", async () => {
+    // First call: GET /memories/{id} returns the current memory.
+    // Second call: PUT /memories/{id} with the text.
+    const fetchMock = mock(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PUT") {
+        const body = JSON.parse(init.body as string);
+        // Echo back so we can assert.
+        return new Response(JSON.stringify({ id: "m1", memory: body.text, metadata: body.metadata }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ id: "m1", memory: "original text" }), { status: 200 });
+    }) as typeof fetch;
+    globalThis.fetch = fetchMock;
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    const res = await c.update("m1", { metadata: { pinned: true } });
+    expect(res.memory).toBe("original text");
+  });
+
+  test("throws when text is missing AND the memory has no text either", async () => {
+    mockFetchOnce(200, { id: "m1" }); // no `memory` field
+    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
+    await expect(c.update("m1", { metadata: {} })).rejects.toThrow(/server requires 'text'/);
+  });
+});
+
 describe("SelfHostMemoryClient — health()", () => {
-  test("returns ok when /health responds 2xx", async () => {
+  test("returns ok when /openapi.json responds 2xx (preferred check)", async () => {
     globalThis.fetch = mock(async (input: any) => {
       const url = String(input);
-      if (url.endsWith("/health")) {
-        return new Response("ok", { status: 200 });
+      if (url.endsWith("/openapi.json")) {
+        return new Response("{}", { status: 200 });
       }
       return new Response("not found", { status: 404 });
     }) as typeof fetch;
@@ -229,10 +314,10 @@ describe("SelfHostMemoryClient — health()", () => {
     expect(h.status).toBe(200);
   });
 
-  test("falls back to / when /health is missing", async () => {
+  test("falls back to / when /openapi.json is missing", async () => {
     globalThis.fetch = mock(async (input: any) => {
       const url = String(input);
-      if (url.endsWith("/health")) {
+      if (url.endsWith("/openapi.json")) {
         return new Response("nope", { status: 404 });
       }
       return new Response("hi", { status: 200 });
@@ -249,19 +334,5 @@ describe("SelfHostMemoryClient — health()", () => {
     const c = new SelfHostMemoryClient({ host: "http://h:1" });
     const h = await c.health();
     expect(h.ok).toBe(false);
-  });
-});
-
-describe("SelfHostMemoryClient — deleteUsers / users stubs", () => {
-  test("deleteUsers returns unsupported", async () => {
-    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
-    const r = await c.deleteUsers({ userId: "u" });
-    expect(r.unsupported).toBe(true);
-  });
-
-  test("users returns unsupported", async () => {
-    const c = new SelfHostMemoryClient({ host: "http://h:1", apiKey: "k" });
-    const r = await c.users({});
-    expect(r.unsupported).toBe(true);
   });
 });
