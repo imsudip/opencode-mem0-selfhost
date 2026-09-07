@@ -1,4 +1,1 @@
-# Tracked upstream commit (mem0ai/mem0) for the sync-upstream workflow.
-# The workflow compares this SHA against the latest upstream HEAD and opens
-# a PR when upstream changes.
-6bb1d328ad4ed76ca63186043d958eced488577b
+dae67f74f5cc7bf138c7d7d6f9cec5ce4b4373b3
